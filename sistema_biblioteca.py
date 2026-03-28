@@ -1,23 +1,26 @@
-"""
--A importância de organizar dados na memória utilizando listas, tuplas e dicionários.
--Como listas em Python são estruturas mutáveis e como adicionar elementos usando métodos como append e insert.
--Que tuplas são imutáveis, acessíveis por índices, e não permitem a modificação de seus elementos.
--Dicionários em Python são mutáveis, utilizam pares chave-valor e permitem o acesso rápido aos seus elementos.
--O uso do loop for para iterar sobre listas, tuplas e dicionários.
--A modificação e reordenação de listas através da atribuição de novos valores aos índices.
--Que tentativas de alterar tuplas resultam em erro devido à sua natureza imutável.
--A utilização do método items() para iterar sobre pares chave-valor em dicionários."""
+import datetime
+import csv
+import json
+
+#txt
+def salvar_doc(titulo):
+    with open("doc.txt", "a", encoding="utf-8") as arquivo:
+        agora = datetime.datetime.now()
+        arquivo.write(f"{agora} - Livro Cadastrado: {titulo}\n")
+
+
 
 biblioteca = []
 categorias = ("Romance", "Novela", "Conto", "Crônica", "Fábula", "Lenda/Mito", "HQS/Mangá")
 
 def menu():
-    print("••••••••••𝐖𝐄𝐋𝐂𝐎𝐌𝐄••••••••••")
+    print("•••••••••• 𝐖𝐄𝐋𝐂𝐎𝐌𝐄 ••••••••••")
     print("1. Cadastrar Livro")
     print("2. Listar Livros")
     print("3. Alocar Livro")
     print("4. Devolver Livro")
     print("5. Listar livros disponíveis")
+    print("6. Exportar para CSV ")
     print("0. Sair")
 
     
@@ -43,7 +46,9 @@ def cadastrar_livro():
     }
 
     biblioteca.append(livro)
+    salvar_doc(titulo)
     print("Livro cadastrado com sucesso. ✅")
+
 
 
 def listar_livros():
@@ -57,6 +62,8 @@ def listar_livros():
             print(f"{chave.capitalize()}: {valor}")
         print(30 * "•")
 
+
+
 def emprestar_livro():
 
     titulo = input("Título: ")
@@ -69,10 +76,10 @@ def emprestar_livro():
                 livro["disponivel"] = False
                 print(f"Livro {livro['titulo']} alocado com sucesso. ✅")  
             return
-            
+
+
                     
 def devolver_livro():
-
     titulo = input("Título: ")
 
     for livro in biblioteca:
@@ -81,32 +88,74 @@ def devolver_livro():
                 print("Este livro não está emprestado.")
             else:
                 livro["disponivel"] = True
-                print(f"Livro {livro['titulo']}devolvido com sucesso")
+                print(f"Livro {livro['titulo']} devolvido com sucesso")
             return
         
     print("Livro não encontrado.")
 
+
+
 def listar_livros_disponiveis():
-        for livro in biblioteca:
-            if livro["disponivel"] == True:
-                for chave, valor in livro.items():
-                    print(f"{chave.capitalize()}: {valor}")
+    for livro in biblioteca:
+        if livro["disponivel"] == True:
+            for chave, valor in livro.items():
+                print(f"{chave.capitalize()}: {valor}")
+
+
+
+#exportar 
+def exportar_cvs():
+    if len(biblioteca) == 0:
+        print("Nenhum livro para exportar.")
+        return
+    
+    with open("biblioteca.csv", "w", newline="", encoding="utf-8") as arquivo:
+        cabeçalho = biblioteca[0].keys()
+        escritor = csv.DictWriter(arquivo, fieldnames=cabeçalho)
+        escritor.writeheader()
+        escritor.writerows(biblioteca)
+
+
+
+def salvar_json():
+    with open("biblioteca.json", "w", encoding="utf-8") as f:
+        json.dump(biblioteca, f , indent=4)
+
+
+
+def carregar_json():
+    global biblioteca
+    try:
+        with open("biblioteca.json", "r", encoding="utf-8") as f:
+            biblioteca = json.load(f)
+        print("Dados carregados com sucesso.")
+    except FileNotFoundError:
+        biblioteca = []
+
+
+
+carregar_json()
+
+
 
 while True:
     menu()
     opcao = input("\n Escolha uma opção: ")
 
-    if opcao == 1:
+    if opcao == "1":
         cadastrar_livro()
-    elif opcao == 2:
+    elif opcao == "2":
         listar_livros()
-    elif opcao == 3:
+    elif opcao == "3":
         emprestar_livro()
-    elif opcao == 4: 
+    elif opcao == "4": 
         devolver_livro()
-    elif opcao == 5:
+    elif opcao == "5":
         listar_livros_disponiveis()
-    elif opcao == 0:
+    elif opcao == "6":
+        exportar_cvs()
+    elif opcao == "0":
+        salvar_json()
         print("Até logo!")
         break
     else:
