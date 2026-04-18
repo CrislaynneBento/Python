@@ -1,2 +1,0 @@
-2026-03-28 10:54:57.374018 - Livro Cadastrado: python -u "c:\Users\Cris\Documents\Python\LTD\sistema_biblioteca.py"
-2026-03-28 10:55:58.838412 - Livro Cadastrado: Lolita
