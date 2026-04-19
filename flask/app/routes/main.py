@@ -1,134 +1,191 @@
-from flask import Blueprint, jsonify, request, current_app
-from app.models.user import LoginPayLoad
-from pydantic import ValidationError   
+from flask import Blueprint, jsonify, request, current_app, render_template, redirect, url_for, flash, session
 from app import db
 from bson import ObjectId
-from app.models.products import *
+from pydantic import ValidationError
 from app.decorators import token_required
+from app.models.user import LoginPayLoad
+from app.models.products import *
+from app.models.sale import sale
 from datetime import datetime, timedelta, timezone
 import jwt
+import io
+import csv
+
 
 #blueprint é um mini app que servira como decorator para definir rotas por funcionalidade
 main_bp = Blueprint('main_bp', __name__)
 
 @main_bp.route('/')
 def index():
-    return jsonify({"message":"Welcome to Framework Flask!"})
+    if 'jwt_token' not in session:
+        return redirect(url_for('main_bp.login'))
+    return redirect(url_for('main_bp.dashboard'))
+
+
+@main_bp.route('/dashboard')
+def dashboard():
+    if 'jwt_token' not in session:
+        return redirect(url_for('main_bp.login'))
+    return render_template('dashboard.html', title='Dashboard')
 
 
 
-@main_bp.route('/login', methods=['POST'])
+#----------------------------------------ROTAS DE AUTENTICAÇÃO------------------------------------------
+@main_bp.route('/login', methods=['POST', 'GET'])
 def login():
-    try:
-
-        raw_data = request.get_json()    
-        user_data = LoginPayLoad(**raw_data) 
-        #operador **, que desacopla o dicionário em argumentos de palavras-chave atribuídos automaticamente aos atributos de classe.
-        
-    except ValidationError as e: 
-        return jsonify({"error": e.errors()}), 400
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        user_data = LoginPayLoad(username=username, password=password)
     
-    except Exception as e: 
-        return jsonify({"error": "Erro durante a requisição do dado"}), 500
+        user_in_db = db.users.find_one({"username": username})
 
-    if user_data.username == 'admin' and user_data.password == "supersecret":
-        token = jwt.encode(
-            {
-            "user_id" : user_data.username,
-            "exp" : datetime.now(timezone.utc) + timedelta(minutes=30)
-            },
-            current_app.config['SECRET_KEY'],
-            algorithm = 'HS256'
-            )
-        
-        return jsonify({"access_token" : token}), 200
+        if user_in_db and user_in_db.get('password') == password:
+            token = jwt.encode({
+                'user_id': user_data.username,
+                'exp': datetime.now(timezone.utc) + timedelta(minutes=30) # Token expira em 30 minutos
+            }, current_app.config['SECRET_KEY'], algorithm="HS256")
+
+            session['jwt_token'] = token    
+            return redirect(url_for('main_bp.dashboard'))
+        else:
+            flash('Usuário ou senha inválidos.', 'danger')
+            return redirect(url_for('main_bp.login'))
     
-    return jsonify({"message": "Credenciais inválidas"}), 401
+    return render_template('login.html', title='Login')
 
 
 
 
-#----------------------------------------ROTAS DE PRODUTOS-----------------------------------------
-
+#----------------------------------------ROTAS DE PRODUTOS(CRUD)-----------------------------------------
 @main_bp.route('/products', methods=['GET'])
 def get_products(): 
-    
-    productsCursor = db.products.find({})
-    products_list = [ProductDBModel(**product).model_dump(by_alias = True, exclude_none = True) for product in productsCursor]
-    return jsonify(products_list)
+    if 'jwt_token' not in session:
+        return redirect(url_for('main_bp.login'))
+        
+    products_cursor = db.products.find({})
+    return render_template('products.html', products=products_cursor, title='Produtos')
 
 
 
 @main_bp.route('/products', methods=['POST']) 
 @token_required
-def create_product(token):
-    try: 
+def create_product(jwt_token):
+    try:
         product = Product(**request.get_json())
+        product_result = db.products.insert_one(product.model_dump())
+        return jsonify({'message': f'Produto ({product.name}) com o id ({product_result}) criado com sucesso!'})
     except ValidationError as e:
-        return jsonify({"Error" : e.errors()})
-    
-    result = db.products.insert_one(product.model_dump())
-    return jsonify({"message":"Welcome to route for append new product!",
-                    "id":str(result.inserted_id)}), 201
+        return jsonify({'errors': e.errors()}), 400
 
 
 
 @main_bp.route('/product/<string:product_id>', methods=['GET'])
 def get_product_by_id(product_id):
-    try: 
+    try:
         oid = ObjectId(product_id)
-        
-    except Exception as e:
-        return jsonify({"error" : f" Erro ao transformar o {product_id} em ObjectID: {e}!"})
-    
+    except Exception:
+        return jsonify({"error": "ID do produto inválido"}), 400
+
     product = db.products.find_one({"_id": oid})
 
     if product:
-        product_model = ProductDBModel(**product).model_dump(by_alias=True, exclude_none= True)
-        return jsonify (product_model)
-    else: 
-        return jsonify({"error": f"produto com id: {product_id} - não encontrado"})
+        product_model = ProductDBModel(**product).model_dump(by_alias=True, exclude=None)
+        return jsonify(product_model)
+    else:
+        return jsonify({"error": "Produto não encontrado"}), 404
 
 
 
 
 @main_bp.route('/product/<string:product_id>', methods=['PUT'])
 @token_required
-def update_product(token, product_id):
+def update_product(jwt_token, product_id):
     try:
-       oid = ObjectId(product_id)
-       update_data = update_products(**request.get_json())
-       update_result = db.products.update_one(
-           
-               {"_id" : oid},
-               {"$set": update_data.model_dump(exclude_unset=True)}
-           
-       )
-       if update_result.matched_count == 0:
-           return jsonify({"error":"Produto não encontrado!"}), 404
-       update_product = db.products.find_one({"_id":oid})
-       return jsonify(ProductDBModel(**update_product).model_dump(by_alias=True, exclude_none=True))
+        oid = ObjectId(product_id)
+        update_data = update_products(**request.get_json())
     except ValidationError as e:
-        return jsonify({"error": e.erros()})
+        return jsonify({"errors": e.errors()}), 400
+
+    update_result = db.products.update_one(
+        {"_id": oid}, 
+        {"$set": update_data.model_dump(exclude_unset=True)})
+    
+    if update_result.matched_count == 0: # Não encontramos nenhum produto com esse ID
+        return jsonify({"error": "Produto não encontrado"}), 404
+
+    updated_product = db.products.find_one({"_id": oid})
+    return jsonify(ProductDBModel(**updated_product).model_dump(by_alias=True, exclude=None))
     
 
 
 
-@main_bp.route('/product/<int:product_id>', methods=['PUT'])
-def delete_product(product_id):
-    return jsonify({"message":f"This route delete a product with your id {product_id}."})
+@main_bp.route('/product/<string:product_id>', methods=['DELETE'])
+@token_required
+def delete_product(jwt_token, product_id):
+    try:
+        oid = ObjectId(product_id)
+    except Exception:
+        return jsonify({"error": "ID do produto inválido"}), 400
+
+    delete_result = db.products.delete_one({"_id": oid})
+
+    if delete_result.deleted_count == 0:
+        return jsonify({"error": "Produto não encontrado"}), 404
+    
+    return "", 204
 
 
 
 #-----------------------------------------ROTA DE VENDAS--------------------------------------------
 @main_bp.route('/vendas/upload', methods=['GET'])
 def upload_sales_page():
-    return jsonify({"message":"Mostra as vendas da página!"})
-
+    if 'jwt_token' not in session:
+        return redirect(url_for('main_bp.login'))
+    return render_template('upload_sales.html', title='Upload de Vendas')
 
 
 @main_bp.route('/vendas/upload', methods=['POST'])
-def upload_sales():
-    return jsonify({"message":"Faz a importação de vendas através de um arquivo!"})
+@token_required
+def upload_sales(jwt_token):
+    if 'file' not in request.files:
+        return jsonify({"error": "Nenhum arquivo enviado"}), 400
+    
+    file = request.files['file']
 
+    if file.filename == '':
+        return jsonify({"error": "Nenhum arquivo selecionado"}), 400
 
+    if file and file.filename.endswith('.csv'):
+        stream = io.StringIO(file.stream.read().decode("UTF-8"), newline=None)
+        csv_reader = csv.DictReader(stream)
+
+        sales_to_insert = []
+        errors = []
+
+        for row_num, row in enumerate(csv_reader, 1):
+            try:
+                sale_data = sale(**row)
+                if not db.products.find_one({"_id": ObjectId(sale_data.product_id)}):
+                    errors.append(f"Linha {row_num}: Produto com ID '{sale_data.product_id}' não encontrado.")
+                    continue  # Pula para a próxima linha
+                sales_to_insert.append(sale_data.model_dump())
+
+            except ValidationError as e:
+                errors.append(f"Linha {row_num}: Dados inválidos - {e.errors()}")
+            except Exception as e:
+                errors.append(f"Linha {row_num}: Erro inesperado ao processar a linha - {str(e)}")
+
+        if sales_to_insert:
+            try:
+                db.sales.insert_many(sales_to_insert)
+            except Exception as e:
+                 return jsonify({"error": f"Erro ao inserir dados no banco: {e}"}), 500
+
+        return jsonify({
+            "message": "Upload processado com sucesso.",
+            "vendas_importadas": len(sales_to_insert),
+            "erros_encontrados": errors
+        }), 200
+
+    return jsonify({"error": "Formato de arquivo inválido. Por favor, envie um arquivo .csv"}), 400
